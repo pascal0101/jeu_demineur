@@ -1,0 +1,224 @@
+#include "plateau.h"
+#include "case.h"
+#include <QWidget>
+#include <QVBoxLayout>
+#include <QHBoxLayout>
+#include <QMenuBar>
+#include <QMenu>
+#include <QAction>
+#include <QActionGroup>
+#include <QPushButton>
+#include <QToolBar>
+#include <QTimer>
+#include <QLCDNumber>
+#include <QGraphicsView>
+
+
+
+
+void Plateau::paintGrid()
+{
+    while (!grid_layout->isEmpty())
+    {
+        auto *item = grid_layout->takeAt(0);
+        delete item->widget();
+        delete item;
+    }
+
+    std::vector<std::vector<Niveau::Index>> grid = game->getGrid();
+
+    for (unsigned int i = 0; i < grid.size(); ++i)
+        for (unsigned int j = 0; j < grid[0].size(); ++j)
+        {
+            Case *cell = new Case(grid[i][j]);
+            cell->setStyleSheet("background-color: blue");
+            grid_layout->addWidget(cell,
+                                   static_cast<int>(i),
+                                   static_cast<int>(j));
+
+            connect(cell, &Case::clicked,
+                    game, [this, cell]()
+            {
+                game->click(cell->getCell());
+            });
+
+            connect(cell, &Case::rightClicked,
+                    game, [this, cell]()
+            {
+                game->switchFlag(cell->getCell());
+            });
+
+            connect(cell, &Case::doubleClicked,
+                    game, [this, cell]()
+            {
+                game->doubleClick(cell->getCell());
+            });
+
+            connect(game, &Niveau::gameOver,
+                    cell, &Case::showContent);
+
+            connect(game, &Niveau::youWon,
+                    cell, &Case::showContent);
+        }
+
+    connect(game, &Niveau::change,
+            this, [this](const Niveau::Index & i)
+    {
+        qobject_cast<Case *>(grid_layout->
+                                   itemAtPosition(static_cast<int>(i.row()),
+                                           static_cast<int>(i.column()))->
+                                   widget())->update();
+    });
+}
+
+Plateau::Plateau(QWidget *parent):
+    QMainWindow(parent),
+    game(nullptr),
+    grid_layout(new QGridLayout)
+{
+    setWindowFlags(windowFlags() | Qt::MSWindowsFixedSizeDialogHint);
+    QWidget *main_widget = new QWidget;
+    QVBoxLayout *main_layout = new QVBoxLayout;
+    QHBoxLayout *head_layout = new QHBoxLayout;
+    QHBoxLayout *centrate_grid_layout = new QHBoxLayout;
+    main_layout->addLayout(head_layout);
+    main_layout->addLayout(centrate_grid_layout);
+    main_layout->addStretch();
+
+    centrate_grid_layout->addStretch(1);
+    centrate_grid_layout->addLayout(grid_layout);
+    centrate_grid_layout->addStretch(1);
+
+    main_widget->setLayout(main_layout);
+    setCentralWidget(main_widget);
+    layout()->setSizeConstraint(QLayout::SetFixedSize);
+    grid_layout->setSizeConstraint(QLayout::SetFixedSize);
+
+    grid_layout->setSpacing(1);
+
+    //Menu
+    QMenu *file = new QMenu("Ficher");
+    QAction *menu_new_game = new QAction("Nouveau jeu");
+    QMenu *options = new QMenu("Options");
+
+    QActionGroup *difficulty = new QActionGroup(options);
+    QAction *easy = new QAction("Facile", difficulty);
+    easy->setCheckable(true);
+    easy->setChecked(true);
+    QAction *intermediate = new QAction("Moyen", difficulty);
+    intermediate->setCheckable(true);
+    QAction *hard = new QAction("Dificile", difficulty);
+    hard->setCheckable(true);
+
+    QAction *exit = new QAction("quitter");
+
+    menuBar()->addMenu(file);
+    file->addAction(menu_new_game);
+    file->addSeparator();
+    file->addMenu(options);
+    options->addAction(easy);
+    options->addAction(intermediate);
+    options->addAction(hard);
+    file->addSeparator();
+    file->addAction(exit);
+
+    //Head Bar
+    QPushButton *smile_button = new QPushButton(QIcon(":/icon/default"),
+            "");
+    QLCDNumber *bomb_screen = new QLCDNumber();
+    QLCDNumber *time_screen = new QLCDNumber();
+    QTimer *timer = new QTimer(time_screen);
+    head_layout->addWidget(bomb_screen);
+    head_layout->addStretch();
+    head_layout->addWidget(smile_button);
+    head_layout->addStretch();
+    head_layout->addWidget(time_screen);
+
+    //connects for menu and head bar
+    connect(menu_new_game, &QAction::triggered,
+            smile_button, &QPushButton::clicked);
+
+    connect(difficulty, &QActionGroup::triggered,
+            smile_button, &QPushButton::clicked);
+
+    connect(exit, &QAction::triggered,
+            this, &Plateau::close);
+
+    connect(smile_button, &QPushButton::clicked,
+            timer, [timer]()
+    {
+        timer->start(1000);
+    });
+
+    connect(smile_button, &QPushButton::clicked,
+            time_screen, [time_screen]()
+    {
+        time_screen->display(0);
+    });
+
+    connect(timer, &QTimer::timeout,
+            time_screen, [time_screen]()
+    {
+        time_screen->display(time_screen->value() + 1);
+    });
+
+    connect(smile_button, &QPushButton::clicked,
+            this, [this, difficulty, smile_button, timer, bomb_screen]()
+    {
+        delete game;
+
+        if (difficulty->checkedAction()->text() == "Facile")
+            game = new Niveau(Niveau::Easy, this);
+        else if (difficulty->checkedAction()->text() == "Moyen")
+            game = new Niveau(Niveau::Intermediate, this);
+        else if (difficulty->checkedAction()->text() == "Dificile")
+            game = new Niveau(Niveau::Hard, this);
+
+        bomb_screen->display(game->getBombs());
+
+        connect(game, &Niveau::gameOver,
+                smile_button, [smile_button, timer]()
+        {
+            timer->stop();
+            smile_button->setIcon(QIcon(":/icon/lose"));
+        });
+
+        connect(game, &Niveau::youWon,
+                smile_button, [smile_button, timer]()
+        {
+            timer->stop();
+            smile_button->setIcon(QIcon(":/icon/win"));
+        });
+
+        connect(game, &Niveau::change,
+                this, [this, bomb_screen]()
+        {
+            if (game->getBombs() != static_cast<int>(bomb_screen->value()))
+                bomb_screen->display(game->getBombs());
+        });
+
+        paintGrid();
+    });
+
+    connect(smile_button, &QPushButton::pressed,
+            smile_button, [smile_button]()
+    {
+        smile_button->setIcon(QIcon(":/icon/click"));
+    });
+
+    connect(smile_button, &QPushButton::released,
+            smile_button, [smile_button]()
+    {
+        smile_button->setIcon(QIcon(":/icon/default"));
+    });
+
+    emit smile_button->clicked();
+}
+
+QSize Plateau::sizeHint() const
+{
+    return {0, 0};
+}
+Plateau::~Plateau()
+{
+}
